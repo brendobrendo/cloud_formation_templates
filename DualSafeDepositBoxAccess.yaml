@@ -1,0 +1,69 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Virtual Safe Deposit Box Access with Dual-Key Security
+
+Resources:
+  CustomerSafeDepositBox:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-safe-deposit-box-${AWS::Region}'
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+
+  BankOwnedKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: "Bank-owned key for S3 bucket access"
+      KeyPolicy:
+        Version: "2012-10-17"
+        Id: "key-default-1"
+        Statement:
+          - Sid: "Enable IAM User Permissions"
+            Effect: "Allow"
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: "kms:*"
+            Resource: "*"
+
+  BankOwnedKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: "alias/BankOwnedKey"
+      TargetKeyId: !Ref BankOwnedKey
+
+  SafeDepositBoxAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "lambda.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "SafeDepositBoxAccessPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                  - "kms:Decrypt"
+                Resource: 
+                  - !GetAtt CustomerSafeDepositBox.Arn
+                  - !Sub '${BankOwnedKey.Arn}/*'
+
+Outputs:
+  SafeDepositBoxBucketName:
+    Description: "Name of the S3 bucket used as the safe deposit box"
+    Value: !Ref CustomerSafeDepositBox
+
+  BankOwnedKeyARN:
+    Description: "ARN of the bank-owned KMS key for bucket encryption"
+    Value: !GetAtt BankOwnedKey.Arn
+
+  SafeDepositBoxAccessRoleARN:
+    Description: "ARN of the IAM role for accessing the safe deposit box"
+    Value: !GetAtt SafeDepositBoxAccessRole.Arn
