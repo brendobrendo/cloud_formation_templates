@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Transaction Flow with Fraud Detection
+
+Resources:
+  TransactionDataStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+      Name: TransactionDataStream
+
+  FraudDetectionStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      ShardCount: 1
+      Name: FraudDetectionStream
+
+  TransactionProcessingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: nodejs14.x
+      Code:
+        S3Bucket: <YOUR_S3_BUCKET_NAME>
+        S3Key: transaction-processing.zip
+      Environment:
+        Variables:
+          FRAUD_DETECTION_STREAM: !Ref FraudDetectionStream
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaKinesisExecutionPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:DescribeStream
+                  - kinesis:ListStreams
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+
+  KinesisAnalyticsApplication:
+    Type: AWS::KinesisAnalytics::Application
+    Properties:
+      Inputs:
+        - NamePrefix: "SourceSQLStream"
+          KinesisStreamsInput:
+            ResourceARN: !GetAtt TransactionDataStream.Arn
+            RoleARN: !GetAtt KinesisAnalyticsRole.Arn
+          InputSchema:
+            RecordFormat:
+              RecordFormatType: "JSON"
+              MappingParameters:
+                JSONMappingParameters:
+                  RecordRowPath: "$"
+            RecordEncoding: "UTF-8"
+            RecordColumns:
+              - Name: "transactionId"
+                SqlType: "VARCHAR(64)"
+                Mapping: "$.transactionId"
+              - Name: "transactionAmount"
+                SqlType: "DOUBLE"
+                Mapping: "$.transactionAmount"
+              - Name: "accountId"
+                SqlType: "VARCHAR(64)"
+                Mapping: "$.accountId"
+              - Name: "timestamp"
+                SqlType: "TIMESTAMP"
+                Mapping: "$.timestamp"
+
+  KinesisAnalyticsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: kinesisanalytics.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: KinesisAnalyticsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                  - kinesis:GetShardIterator
+                  - kinesis:GetRecords
+                  - kinesis:ListStreams
+                Resource: !GetAtt TransactionDataStream.Arn
+
+Outputs:
+  TransactionDataStreamARN:
+    Description: "ARN of the transaction data stream"
+    Value: !GetAtt TransactionDataStream.Arn
+
+  FraudDetectionStreamARN:
+    Description: "ARN of the fraud detection stream"
+    Value: !GetAtt FraudDetectionStream.Arn
+
+  TransactionProcessingFunctionARN:
+    Description: "ARN of the transaction processing Lambda function"
+    Value: !GetAtt TransactionProcessingFunction.Arn
